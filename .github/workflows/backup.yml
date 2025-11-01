@@ -1,62 +1,75 @@
-name: Automated MongoDB Backup
+name: MongoDB Backup to Oracle S3
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # Runs daily at midnight UTC
-  workflow_dispatch:       # Allow manual trigger too
+    - cron: '0 2 * * *' # runs every day at 2 AM UTC
+  workflow_dispatch:
 
 jobs:
   backup:
     runs-on: ubuntu-latest
 
-    env:
-      OCI_S3_ACCESS_KEY: ${{ secrets.OCI_S3_ACCESS_KEY }}
-      OCI_S3_SECRET_KEY: ${{ secrets.OCI_S3_SECRET_KEY }}
-      OCI_S3_BUCKET: ${{ secrets.OCI_S3_BUCKET }}
-      OCI_S3_ENDPOINT: ${{ secrets.OCI_S3_ENDPOINT }}
-      OCI_S3_REGION: ${{ secrets.OCI_S3_REGION }}
-      DO_HOST: ${{ secrets.DO_HOST }}
-      DO_USER: ${{ secrets.DO_USER }}
-      DO_SSH_PORT: ${{ secrets.DO_SSH_PORT }}
-      DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
-
     steps:
-      - name: Checkout repository
+      # Step 1: Checkout your repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      # Step 2: Update packages and install unzip
+      - name: Update system
+        run: sudo apt update -y
+
+      - name: Install unzip
+        run: sudo apt install -y unzip
+
+      # Step 3: Install AWS CLI v2 (for Oracle S3)
+      - name: Install AWS CLI v2
         run: |
-          sudo apt update
-          sudo apt install -y openssh-client awscli
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          aws --version
 
-      - name: Setup SSH key
+      # Step 4: Install MongoDB tools
+      - name: Install MongoDB Tools
         run: |
-          mkdir -p ~/.ssh
-          echo "$DO_SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p $DO_SSH_PORT $DO_HOST >> ~/.ssh/known_hosts
+          sudo apt-get install -y mongodb-clients
 
-      - name: Dump MongoDB database and upload to OCI
+      # Step 5: Dump MongoDB database
+      - name: Backup MongoDB database
         run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          BACKUP_FILE="mongo_backup_${TIMESTAMP}.gz"
+          mkdir -p backup
+          mongodump --uri="$MONGO_URI" --out="backup/mongo_backup_$(date +%Y-%m-%d_%H-%M-%S)"
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
 
-          echo "Creating MongoDB backup on remote server..."
-          ssh -p $DO_SSH_PORT $DO_USER@$DO_HOST "mongodump --archive=/tmp/${BACKUP_FILE} --gzip"
+      # Step 6: Compress backup
+      - name: Compress backup files
+        run: |
+          cd backup
+          tar -czf mongo_backup.tar.gz *
+          cd ..
+          ls -lh backup/
 
-          echo "Downloading backup from remote server..."
-          scp -P $DO_SSH_PORT $DO_USER@$DO_HOST:/tmp/${BACKUP_FILE} .
+      # Step 7: Configure AWS CLI for Oracle S3
+      - name: Configure AWS (Oracle S3)
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.OCI_S3_ACCESS_KEY }}
+          aws configure set aws_secret_access_key ${{ secrets.OCI_S3_SECRET_KEY }}
+          aws configure set default.region ${{ secrets.OCI_S3_REGION }}
+          aws configure set default.output json
 
-          echo "Uploading to OCI Object Storage..."
-          AWS_ACCESS_KEY_ID=$OCI_S3_ACCESS_KEY \
-          AWS_SECRET_ACCESS_KEY=$OCI_S3_SECRET_KEY \
-          aws s3 cp $BACKUP_FILE s3://$OCI_S3_BUCKET/ \
-            --endpoint-url $OCI_S3_ENDPOINT \
-            --region $OCI_S3_REGION
+      # Step 8: Upload backup to Oracle S3 bucket
+      - name: Upload to Oracle S3 bucket
+        run: |
+          aws --endpoint-url=${{ secrets.OCI_S3_ENDPOINT }} s3 cp backup/mongo_backup.tar.gz s3://${{ secrets.OCI_S3_BUCKET }}/backups/mongo_backup_$(date +%Y-%m-%d_%H-%M-%S).tar.gz
 
-          echo "Cleaning up..."
-          ssh -p $DO_SSH_PORT $DO_USER@$DO_HOST "rm /tmp/${BACKUP_FILE}"
-          rm $BACKUP_FILE
-
-      - name: Done
-        run: echo "✅ MongoDB backup completed and uploaded to OCI successfully!"
+      # Optional Step 9: Deploy to your DigitalOcean server (if needed)
+      - name: Deploy via SSH (optional)
+        if: ${{ secrets.SSH_PRIVATE_KEY != '' }}
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "backup/mongo_backup.tar.gz"
+          target: "~/server_backups/"
