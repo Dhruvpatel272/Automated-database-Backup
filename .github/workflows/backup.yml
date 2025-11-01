@@ -61,7 +61,69 @@ jobs:
       # Step 8: Upload backup to Oracle S3 bucket
       - name: Upload to Oracle S3 bucket
         run: |
-          aws --endpoint-url=${{ secrets.OCI_S3_ENDPOINT }} s3 cp backup/mongo_backup.tar.gz s3://${{ secrets.OCI_S3_BUCKET }}/backups/mongo_backup_$(date +%Y-%m-%d_%H-%M-%S).tar.gz
+          aws --endpoint-url=${{ secrets.OCI_S3_ENDPOINT }} s3 cp backup/mongo_backup.tar.gz s3://${{ secrets.OCname: MongoDB Backup to Oracle S3
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # runs every day at 2 AM UTC
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout your repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Update packages and install unzip
+      - name: Update system
+        run: sudo apt update -y
+
+      - name: Install unzip
+        run: sudo apt install -y unzip
+
+      # Step 3: Install AWS CLI v2 (for Oracle S3)
+      - name: Install AWS CLI v2
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          aws --version
+
+      # Step 4: Install MongoDB tools
+      - name: Install MongoDB Tools
+        run: |
+          sudo apt-get install -y mongodb-clients
+
+      # Step 5: Dump MongoDB database
+      - name: Backup MongoDB database
+        run: |
+          mkdir -p backup
+          mongodump --uri="$MONGO_URI" --out="backup/mongo_backup_$(date +%Y-%m-%d_%H-%M-%S)"
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+
+      # Step 6: Compress backup
+      - name: Compress backup files
+        run: |
+          cd backup
+          tar -czf mongo_backup.tar.gz *
+          cd ..
+          ls -lh backup/
+
+      # Step 7: Configure AWS CLI for Oracle S3
+      - name: Configure AWS (Oracle S3)
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.OCI_S3_ACCESS_KEY }}
+          aws configure set aws_secret_access_key ${{ secrets.OCI_S3_SECRET_KEY }}
+          aws configure set default.region ${{ secrets.OCI_S3_REGION }}
+          aws configure set default.output json
+
+      # Step 8: Upload backup to Oracle S3 bucket
+      - name: Upload to Oracle S3 bucket
+I_S3_BUCKET }}/backups/mongo_backup_$(date +%Y-%m-%d_%H-%M-%S).tar.gz
 
       # Optional Step 9: Deploy to your DigitalOcean server (if needed)
       - name: Deploy via SSH (optional)
