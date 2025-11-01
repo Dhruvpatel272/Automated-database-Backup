@@ -1,9 +1,9 @@
-name: Automated Database Backup
+name: Automated MongoDB Backup
 
 on:
   schedule:
     - cron: "0 0 * * *"   # Runs daily at midnight UTC
-  workflow_dispatch:       # Also allow manual trigger
+  workflow_dispatch:       # Allow manual trigger too
 
 jobs:
   backup:
@@ -36,13 +36,13 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p $DO_SSH_PORT $DO_HOST >> ~/.ssh/known_hosts
 
-      - name: Dump database and upload to OCI
+      - name: Dump MongoDB database and upload to OCI
         run: |
           TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          BACKUP_FILE="backup_${TIMESTAMP}.sql.gz"
+          BACKUP_FILE="mongo_backup_${TIMESTAMP}.gz"
 
-          echo "Creating MySQL backup on remote server..."
-          ssh -p $DO_SSH_PORT $DO_USER@$DO_HOST "mysqldump --all-databases | gzip > /tmp/${BACKUP_FILE}"
+          echo "Creating MongoDB backup on remote server..."
+          ssh -p $DO_SSH_PORT $DO_USER@$DO_HOST "mongodump --archive=/tmp/${BACKUP_FILE} --gzip"
 
           echo "Downloading backup from remote server..."
           scp -P $DO_SSH_PORT $DO_USER@$DO_HOST:/tmp/${BACKUP_FILE} .
@@ -59,4 +59,4 @@ jobs:
           rm $BACKUP_FILE
 
       - name: Done
-        run: echo "✅ Backup completed and uploaded to OCI successfully!"
+        run: echo "✅ MongoDB backup completed and uploaded to OCI successfully!"
